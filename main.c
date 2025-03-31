@@ -71,9 +71,9 @@ int get_header_content_length_value(char *req_buffer) {
   printf("Content-Length: %u\n", atoi(content_length_value));
   return atoi(content_length_value);
 }
-// if is_blocking != 1, blocks until receive the 1st message and returns; otherwise blocks until the otherside closes connection
+// if is_blocking != 1, blocks until receive the 1st message and returns
 // assume that the first message read by recv upto the BUFSIZ will include the value of Content-Length. This value will be used to determine if a full HTTP message has been received or not.
-unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t response_buffer_size, int is_blocking) {
+unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t response_buffer_size) {
   ssize_t temp_buffer[BUFSIZ];
   int header_content_length_value = 0, total_recv_bytes = 0, http_metadata_length = 0;
   while(1){
@@ -97,12 +97,16 @@ unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t re
       http_metadata_length = get_http_metadata_length((char *)response_buffer);
     }
 
-    if ((header_content_length_value + http_metadata_length + 4 == total_recv_bytes) || (is_blocking != 1 && header_content_length_value == -1)) {
+    if ((header_content_length_value + http_metadata_length + 4 == total_recv_bytes) || header_content_length_value == -1) {
        break;
     }
   }
-  printf("LB: Received %d bytes with the following contents\n", total_recv_bytes);
-  printf("%s\n", (char* )temp_buffer);
+  if (total_recv_bytes > 0) {
+    printf("LB: Received %d bytes with the following contents\n", total_recv_bytes);
+    printf("%s\n", (char* )temp_buffer);
+  } else {
+    printf("LB: Received 0 bytes \n");
+  }
   return total_recv_bytes;
 }
 
@@ -119,7 +123,7 @@ unsigned int forward_message_upstream(int upstream_port, ssize_t* req_buffer, un
   }
 
   //recv Response
-  bytes_received = receive_message(child_socket, res_buffer, res_buffer_size, 1);
+  bytes_received = receive_message(child_socket, res_buffer, res_buffer_size);
   close(child_socket);
 
   return bytes_received;
@@ -162,7 +166,6 @@ void main(int argc, char **argv) {
     server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     int last_used_upstream_index = 0;
-    ssize_t req_buffer[BUFSIZ], res_buffer[BUFSIZ];
 
     // Create server socketfd
     server_fd = create_socket();
@@ -187,19 +190,25 @@ void main(int argc, char **argv) {
        perror("LB: Fork child process to handle TCP Connection failed");
      } else if (child_pid == 0) {
        printf("Child PID %d\n", getpid());
-       int bytes_received = receive_message(child_fd, req_buffer, BUFSIZ, 0);
+       while(1){
+         ssize_t req_buffer[BUFSIZ], res_buffer[BUFSIZ];
+         int bytes_received = receive_message(child_fd, req_buffer, BUFSIZ);
+         if (bytes_received == 0) {
+           break;
+         }
+         last_used_upstream_index = select_next_upstream_index(UPSTREAM_COUNT, last_used_upstream_index);
+         // Forward message and get the response
+         unsigned int bytes_received_from_upstream;
+         bytes_received_from_upstream = forward_message_upstream(upstream_ports[last_used_upstream_index], req_buffer, bytes_received, res_buffer, BUFSIZ);
+         //printf("LB: Received %d bytes from upstream\n", bytes_received_from_upstream);
 
-       last_used_upstream_index = select_next_upstream_index(UPSTREAM_COUNT, last_used_upstream_index);
-       // Forward message and get the response
-       unsigned int bytes_received_from_upstream;
-       bytes_received_from_upstream = forward_message_upstream(upstream_ports[last_used_upstream_index], req_buffer, bytes_received, res_buffer, BUFSIZ);
-       //printf("LB: Received %d bytes from upstream\n", bytes_received_from_upstream);
-       // Forward response back
-       if (send(child_fd, res_buffer, bytes_received_from_upstream, 0) < 0){
-         perror("LB: Send upstream failed");
-         exit(EXIT_FAILURE);
+         // Forward response back
+         if (send(child_fd, res_buffer, bytes_received_from_upstream, 0) < 0){
+           perror("LB: Send upstream failed");
+           exit(EXIT_FAILURE);
+         }
        }
-       break;
+       exit(0);
      } else {
        close(child_fd);
        printf("LB: Continue to accept other connection\n");
