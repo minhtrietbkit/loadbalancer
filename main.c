@@ -6,6 +6,7 @@
 #include <string.h>
 #include <netinet/tcp.h>
 
+
 int select_next_upstream_index(int array_size, int last_used_upstream_index) {
   //Round robin
   int next_upstream = (last_used_upstream_index + 1) % array_size;
@@ -31,10 +32,50 @@ void connect_upstream (int local_socket, int upstream_port) {
   }
 }
 
+/*
+Return the integever value of HTTP metadata
+or -1 if the sequence that denotes the end of this section "\r\n\r\n" is not found.
+ */
+int get_http_metadata_length(char *req_buffer) {
+  char *metadata_end = strstr(req_buffer, "\r\n\r\n");
+  if (!metadata_end) {
+     perror("LB: Can't find the end of the HTTP metadata section\n");
+     exit(EXIT_FAILURE);
+  }
+  printf("LB: HTTP metadata section length: %li\n", metadata_end - req_buffer);
+  return metadata_end - req_buffer;
+}
+
+/*
+Return the integer value of header Content-Length or -1 if header not found
+ */
+int get_header_content_length_value(char *req_buffer) {
+  char content_length[] = "Content-Length: ";
+  char *content_length_pos;
+  content_length_pos = strstr(req_buffer, content_length);
+
+  if (!content_length_pos) {
+    printf("LB: Can't find Header Content-Length\n");
+    return -1;
+  }
+
+  char *content_length_value_pos = content_length_pos + sizeof(char) * strlen(content_length);
+  int content_length_value_byte_counts = 0;
+  while (*(content_length_value_pos + content_length_value_byte_counts) != '\r') {
+    content_length_value_byte_counts++;
+  }
+
+  char content_length_value[content_length_value_byte_counts];
+  memcpy(content_length_value, content_length_value_pos, content_length_value_byte_counts);
+
+  printf("Content-Length: %u\n", atoi(content_length_value));
+  return atoi(content_length_value);
+}
 // if is_blocking != 1, blocks until receive the 1st message and returns; otherwise blocks until the otherside closes connection
+// assume that the first message read by recv upto the BUFSIZ will include the value of Content-Length. This value will be used to determine if a full HTTP message has been received or not.
 unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t response_buffer_size, int is_blocking) {
   ssize_t temp_buffer[BUFSIZ];
-  int total_recv_bytes = 0;
+  int header_content_length_value = 0, total_recv_bytes = 0, http_metadata_length = 0;
   while(1){
     int recv_bytes = recv(socket_fd, temp_buffer, BUFSIZ, 0);
     if (recv_bytes < 0) {
@@ -47,9 +88,17 @@ unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t re
       break;
     }
     total_recv_bytes += recv_bytes;
+    printf("LB: Total Recv Bytes %i\n", total_recv_bytes);
     strcpy((char* )response_buffer, (char* )temp_buffer);
-    if (is_blocking != 1) {
-      break;
+    header_content_length_value = get_header_content_length_value((char *)response_buffer);
+
+    //Assuming that the metadata will always be <= BUFSIZE
+    if (http_metadata_length == 0) {
+      http_metadata_length = get_http_metadata_length((char *)response_buffer);
+    }
+
+    if ((header_content_length_value + http_metadata_length + 4 == total_recv_bytes) || (is_blocking != 1 && header_content_length_value == -1)) {
+       break;
     }
   }
   printf("LB: Received %d bytes with the following contents\n", total_recv_bytes);
@@ -71,6 +120,8 @@ unsigned int forward_message_upstream(int upstream_port, ssize_t* req_buffer, un
 
   //recv Response
   bytes_received = receive_message(child_socket, res_buffer, res_buffer_size, 1);
+  close(child_socket);
+
   return bytes_received;
 }
 
@@ -78,6 +129,8 @@ int handle_downstream_connection(int child_socket, struct sockaddr_in client_add
 
   return 0;
 }
+
+
 
 void main(int argc, char **argv) {
     printf("PID %d\n", getpid());
@@ -146,9 +199,9 @@ void main(int argc, char **argv) {
          perror("LB: Send upstream failed");
          exit(EXIT_FAILURE);
        }
-       shutdown(child_fd, SHUT_WR);
-       close(child_fd);
+       break;
      } else {
+       close(child_fd);
        printf("LB: Continue to accept other connection\n");
      }
    }
