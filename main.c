@@ -160,8 +160,8 @@ void main(int argc, char **argv) {
     const int UPSTREAM_COUNT = 3;
     int upstream_ports[UPSTREAM_COUNT];
     upstream_ports[0] = 3000;
-    upstream_ports[1] = 3000;
-    upstream_ports[2] = 3000;
+    upstream_ports[1] = 3001;
+    upstream_ports[2] = 3002;
 
     int server_fd, child_fd;
     struct sockaddr_in server_addr, client_addr;
