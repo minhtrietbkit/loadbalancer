@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <netinet/tcp.h>
+#include <signal.h>
 
 
 int select_next_upstream_index(int array_size, int last_used_upstream_index) {
@@ -129,9 +130,15 @@ unsigned int forward_message_upstream(int upstream_port, ssize_t* req_buffer, un
   return bytes_received;
 }
 
-int handle_downstream_connection(int child_socket, struct sockaddr_in client_addr) {
+void setup_sig_child_handler(){
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = SIG_IGN;
+  action.sa_flags |= SA_RESTART | SA_NOCLDSTOP;
 
-  return 0;
+  if (sigaction(SIGCHLD, &action, 0) < 0) {
+    perror("LB: Sigaction failed");
+  }
 }
 
 void main(int argc, char **argv) {
@@ -148,6 +155,8 @@ void main(int argc, char **argv) {
     // round robin select the next host
 
     // ESTABLISHING CONNECTION TO UPSTREAM HOSTS
+
+    setup_sig_child_handler();
     const int UPSTREAM_COUNT = 3;
     int upstream_ports[UPSTREAM_COUNT];
     upstream_ports[0] = 3000;
