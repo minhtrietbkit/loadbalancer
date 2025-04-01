@@ -134,8 +134,6 @@ int handle_downstream_connection(int child_socket, struct sockaddr_in client_add
   return 0;
 }
 
-
-
 void main(int argc, char **argv) {
     printf("PID %d\n", getpid());
     if (argc < 2) {
@@ -185,6 +183,7 @@ void main(int argc, char **argv) {
        perror("LB: Accept downstream connection failed");
        exit(EXIT_FAILURE);
      }
+     last_used_upstream_index = select_next_upstream_index(UPSTREAM_COUNT, last_used_upstream_index);
      pid_t child_pid = fork();
      if (child_pid < 0) {
        perror("LB: Fork child process to handle TCP Connection failed");
@@ -196,7 +195,6 @@ void main(int argc, char **argv) {
          if (bytes_received == 0) {
            break;
          }
-         last_used_upstream_index = select_next_upstream_index(UPSTREAM_COUNT, last_used_upstream_index);
          // Forward message and get the response
          unsigned int bytes_received_from_upstream;
          bytes_received_from_upstream = forward_message_upstream(upstream_ports[last_used_upstream_index], req_buffer, bytes_received, res_buffer, BUFSIZ);
