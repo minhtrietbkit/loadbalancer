@@ -75,9 +75,9 @@ int get_header_content_length_value(char *req_buffer) {
 // if is_blocking != 1, blocks until receive the 1st message and returns
 // assume that the first message read by recv upto the BUFSIZ will include the value of Content-Length. This value will be used to determine if a full HTTP message has been received or not.
 unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t response_buffer_size) {
-  ssize_t temp_buffer[BUFSIZ];
   int header_content_length_value = 0, total_recv_bytes = 0, http_metadata_length = 0;
   while(1){
+    ssize_t temp_buffer[BUFSIZ];
     int recv_bytes = recv(socket_fd, temp_buffer, BUFSIZ, 0);
     if (recv_bytes < 0) {
       perror("LB: recv failed");
@@ -89,22 +89,27 @@ unsigned int receive_message(int socket_fd, ssize_t* response_buffer, ssize_t re
       break;
     }
     total_recv_bytes += recv_bytes;
-    printf("LB: Total Recv Bytes %i\n", total_recv_bytes);
-    strcpy((char* )response_buffer, (char* )temp_buffer);
-    header_content_length_value = get_header_content_length_value((char *)response_buffer);
+    printf("LB: Recv Bytes %i\n", recv_bytes);
+    strncat((char* )response_buffer, (char* )temp_buffer, response_buffer_size - 1);
+
+    //printf("%s\n", (char* )temp_buffer);
 
     //Assuming that the metadata will always be <= BUFSIZE
+    //and that it is included completely in the first TCP segment
     if (http_metadata_length == 0) {
-      http_metadata_length = get_http_metadata_length((char *)response_buffer);
+      http_metadata_length = get_http_metadata_length((char *)temp_buffer);
+      header_content_length_value = get_header_content_length_value((char *)temp_buffer);
     }
 
+    //Assume that if an HTTP message does not have Content-Length header, then it contains of only one TCP segment.
     if ((header_content_length_value + http_metadata_length + 4 == total_recv_bytes) || header_content_length_value == -1) {
        break;
     }
   }
   if (total_recv_bytes > 0) {
     printf("LB: Received %d bytes with the following contents\n", total_recv_bytes);
-    printf("%s\n", (char* )temp_buffer);
+
+
   } else {
     printf("LB: Received 0 bytes \n");
   }
@@ -160,8 +165,8 @@ void main(int argc, char **argv) {
     const int UPSTREAM_COUNT = 3;
     int upstream_ports[UPSTREAM_COUNT];
     upstream_ports[0] = 3000;
-    upstream_ports[1] = 3001;
-    upstream_ports[2] = 3002;
+    upstream_ports[1] = 3000;
+    upstream_ports[2] = 3000;
 
     int server_fd, child_fd;
     struct sockaddr_in server_addr, client_addr;
