@@ -204,7 +204,7 @@ void main(int argc, char **argv) {
      } else if (child_pid == 0) {
        printf("Child PID %d\n", getpid());
        while(1){
-         ssize_t req_buffer[BUFSIZ], res_buffer[BUFSIZ];
+         ssize_t req_buffer[BUFSIZ] = {0}, res_buffer[BUFSIZ] = {0};
          int bytes_received = receive_message(child_fd, req_buffer, BUFSIZ);
          if (bytes_received == 0) {
            break;
